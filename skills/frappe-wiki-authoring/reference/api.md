@@ -159,7 +159,7 @@ otherwise `_three_way_merge` (`:1732`).
 | `$CR.resolve_merge_conflict` `:1530` | `conflict_name`, `resolution` ∈ `"ours"`\|`"theirs"` | — |
 | `$CR.retry_merge_after_resolution` `:1564` | `name` | merge revision name; throws if any conflict is still Open |
 
-### The orientation, stated plainly
+### The orientation, at the source
 
 `_three_way_merge` `:1734-1736`:
 
@@ -169,12 +169,9 @@ ours_items   = get_revision_item_map(space.main_revision)          # ALREADY LIV
 theirs_items = get_effective_revision_item_map(cr.head_revision)   # THE CHANGE REQUEST
 ```
 
-**`ours` = main. `theirs` = the CR's work.** Backwards from git. `"ours"` discards the
-author's edits.
-
 Resolution is **whole-item** — there is no text-level merge — and there is **no rebase**:
 `check_outdated` only sets a flag. Once main has moved, the only path forward is picking a
-side per conflicting page. Surface this to a human.
+side per conflicting page.
 
 `resolve_merge_conflict` refuses once the CR is `Merged` or `Archived` (`:1545`).
 
@@ -193,22 +190,15 @@ side per conflicting page. Surface this to a human.
 - `_can_merge(wiki_space)` (`wiki_change_request.py:75`) is exactly `can_write_space`, and
   gates approve / request_changes / reject / merge / all conflict endpoints.
 
-## Verification endpoints
-
-```bash
-# authoritative — works regardless of Guest readability
-frappectl -s "$SITE" doc list "Wiki Document" -f route=<space-route>/<slug> \
-  --fields name,title,route,is_published,doc_key --json
-```
+## Crawler rendering
 
 Public `/<route>.md` and `llms.txt` go through the crawler renderer, which gates on
-`can_read_space(space, "Guest")` — a private space 404s there even after a clean merge.
+`can_read_space(space, "Guest")` — a private space 404s there even after a clean merge. Verify
+against `Wiki Document` instead (SKILL.md step 10).
 
 ## frappectl mechanics
 
 - `frappectl -s "$SITE" method call <path> -F key=value` — `-F` typed scalar,
   `-F 'key:=<raw JSON>'` for nested lists/dicts, `-f` forces string.
-- `method call` has **no `--input`**. Large markdown bodies:
-  `frappectl -s "$SITE" api method/<path> --input - -X POST` reading JSON from stdin.
 - `-s` works before or after the subcommand.
-- **`version_conflict` exits 0.** A genuine server throw exits 1. Branch on the `ok` field.
+- A genuine server throw exits 1; a `version_conflict` body exits 0.

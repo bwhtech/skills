@@ -1,33 +1,36 @@
 ---
 name: frappe-wiki-authoring
-description: Author and publish Frappe Wiki pages from the CLI using frappectl — open a change request, write markdown pages into a space, review the diff, then submit, approve, and merge it live. Use when the user wants to add, edit, rename, restructure, or delete a wiki page or section; refers to a wiki space by name ("add a page to the Buzz wiki", "update our handbook space", "our docs"); or mentions Wiki Change Request, wiki CR, apply_cr_operations, or publishing/merging wiki changes.
+description: Frappe Wiki authoring and publishing through frappectl change requests. Use when the user wants to add, edit, restructure, or delete a wiki page; names a wiki space ("the Buzz wiki", "our handbook", "our docs"); or mentions Wiki Change Request, wiki CR, or apply_cr_operations.
 ---
 
 # Frappe Wiki authoring via frappectl
 
-Drives Frappe Wiki's change-request flow from the CLI — the same whitelisted APIs the
-`/wiki-app` SPA calls. Author content in a change request, then walk it through
-submit → approve → merge to publish.
+A change request is a **branch**: author content into it, then walk it through
+submit → approve → merge to publish. These are the whitelisted APIs the `/wiki-app` SPA calls.
+
+Git intuition carries almost everywhere here — with one inversion, flagged at
+[Merge conflicts](#merge-conflicts).
 
 Requires Wiki v3 (the `frappe_wiki` module: Wiki Document, Wiki Change Request, Wiki
 Revision). The legacy v2 `Wiki Page` doctypes have no change-request flow.
 
-Every command here was verified end-to-end against a live site. See `reference/api.md` for
-complete signatures, all operation fields, the status machine, and the permission model.
+`reference/api.md` holds full signatures, every operation's fields, the status machine, and
+the permission model.
 
 ## Setup
 
-Site access is preconfigured. Pass `-s <profile>` when the user names a site; with multiple
-profiles, never guess — ask. Do not run `frappectl auth` commands or touch `FRAPPE_*` env vars.
+Site access is preconfigured — pass `-s <profile>` and nothing else. When the user names a
+site, use that profile; with several profiles and no name, ask. An auth error is the user's
+to fix: surface it rather than re-authenticating or editing `FRAPPE_*` env vars.
 
 ```bash
 export CR=wiki.frappe_wiki.doctype.wiki_change_request.wiki_change_request
 export SITE="<profile>"
 ```
 
-## Step 1 — Resolve the space (do this first, always)
+## Step 1 — Resolve the space
 
-The user will say "the Buzz wiki" or "our handbook". That is not an identifier. Resolve it:
+"The Buzz wiki" is not an identifier. Turn it into a **docname** before anything else:
 
 ```bash
 frappectl -s "$SITE" doc list "Wiki Space" \
@@ -38,16 +41,16 @@ frappectl -s "$SITE" doc list "Wiki Space" \
 Match the user's phrase case-insensitively: `space_name` first, then `route`, then substring
 on both. Then:
 
-- **Exactly one match** → proceed, and **echo the resolution** — "Buzz → `en0gc980kr`, route
-  `/buzz`" — so a wrong guess is visible before anything is written.
-- **Zero matches** → list every space as `space_name (route)` and ask. **Never create a space**;
-  that is a much larger decision than the user asked for.
-- **Multiple matches** → ask, showing `space_name`, `route`, and modified date. Never take the first.
-- **`git_synced: 1`** → **stop.** The space is GitHub-backed and every write will be refused.
-  Tell the user the edit belongs in the repo.
-- **`can_contribute: false`** (step 2) → stop. Don't open a CR that can't be written.
+- **Exactly one match** → **echo the resolution** — "Buzz → `en0gc980kr`, route `/buzz`" —
+  so a wrong guess is visible before anything is written.
+- **Zero matches** → list every space as `space_name (route)` and ask. Creating a space is a
+  far larger decision than the user asked for; leave it to them.
+- **Several matches** → ask, showing `space_name`, `route`, and modified date.
+- **`git_synced: 1`** → **stop.** The space is GitHub-backed and every write is refused. The
+  edit belongs in the repo.
 
-Carry the **docname** (`en0gc980kr`) forward. Every API takes it. The route slug is never accepted.
+Done when you hold the docname (`en0gc980kr`). Every API takes it; the route slug is never
+accepted.
 
 ## Step 2 — Confirm access
 
@@ -56,8 +59,9 @@ frappectl -s "$SITE" method call wiki.api.get_space_capabilities -F space=<SPACE
 # {"can_read": true, "can_write": true, "can_contribute": true}
 ```
 
-`can_contribute` → you can author. `can_write` → you can also approve and merge. If
-`can_write` is false, author and submit, then tell the user who needs to approve.
+`can_contribute` → you can author. `can_write` → you can also approve and merge. With
+`can_write: false`, author and submit, then name who has to approve. With
+`can_contribute: false`, stop — the CR would be unwritable.
 
 ## Step 3 — Open a draft change request
 
@@ -66,10 +70,10 @@ frappectl -s "$SITE" method call $CR.get_or_create_draft_change_request \
   -F wiki_space=<SPACE> -f title="<what you're doing>" --json
 ```
 
-Keep `.name`. This **reuses** the user's newest `Draft` / `Changes Requested` CR in that space —
-so the title may be ignored, and there may already be unrelated work in it. Check
-`diff_change_request` before adding to it; if it contains someone's unfinished work, use
-`$CR.create_change_request` for a fresh one instead.
+Keep `.name`. This **reuses** the user's newest `Draft` / `Changes Requested` CR in that space,
+so the title may be ignored and unrelated work may already sit in it. Check
+`diff_change_request` first; if it holds someone's unfinished work, take a fresh branch with
+`$CR.create_change_request`.
 
 ## Step 4 — Get the tree, root key, and version
 
@@ -100,17 +104,27 @@ cat <<'JSON' | frappectl -s "$SITE" api method/$CR.apply_cr_operations --input -
 JSON
 ```
 
+Ops: `create_node`, `update_content`, `update_node`, `delete_node`, `move_node`,
+`reorder_children` — field lists in `reference/api.md`. Later ops in the *same* batch may
+reference an earlier `temp_key`; a *later call* must use the real `doc_key`.
+
+**Content is raw markdown.** HTML is stored verbatim and renders as literal text.
+
+Every write obeys two rules:
+
+- **Send the `current_version` you last read as `base_version`.** A `null` there disables the
+  concurrency check and turns a lost update into a silent one.
+- **Run `apply_cr_operations` one at a time**, each after the previous response lands. No `&`,
+  no parallel tool calls — writes take a row lock and must be serial.
+
 Read three fields from every response:
 
-- `ok` — **branch on this, not on exit status** (see Failure modes)
+- `ok` — **success lives here, not in the exit code.** A `version_conflict` exits 0.
 - `current_version` — your next `base_version`
 - `temp_key_map` — `{"tmp-1": "487291614eed"}`, the real `doc_key`
 
-Ops: `create_node`, `update_content`, `update_node`, `delete_node`, `move_node`,
-`reorder_children`. Field lists in `reference/api.md`. Later ops in the *same* batch may
-reference an earlier `temp_key`; a *later call* must use the real `doc_key`.
-
-**Content is raw markdown.** No HTML — it is stored verbatim and renders as literal text.
+Done when every page the user named holds a real `doc_key` — from `temp_key_map` for creates,
+echoed in `items[]` for edits.
 
 ### One-field edits
 
@@ -130,9 +144,8 @@ frappectl -s "$SITE" method call $CR.diff_change_request -F name=<CR_NAME> -f sc
 frappectl -s "$SITE" method call $CR.check_outdated -F name=<CR_NAME> --json   # must be 0
 ```
 
-`check_outdated` returning `1` means main moved since this CR started. **Stop and surface it
-to the user.** There is no rebase, and conflict resolution clobbers whole pages in one
-direction. Do not resolve it autonomously.
+`check_outdated` returning `1` means main moved since this branch started. **Stop and surface
+it to the user** — see [Merge conflicts](#merge-conflicts).
 
 ## Steps 7–9 — Submit, approve, merge
 
@@ -152,54 +165,44 @@ frappectl -s "$SITE" doc list "Wiki Document" -f route=<space-route>/<slug> \
   --fields name,title,route,is_published,doc_key --json
 ```
 
-The live `doc_key` will equal the CR's. Use this rather than fetching the public URL — the
-`/<route>.md` endpoint 404s on spaces that aren't Guest-readable even after a clean merge.
+Done when the live `doc_key` equals the CR's, for every page written. Use this rather than the
+public `/<route>.md` endpoint, which 404s on spaces that aren't Guest-readable even after a
+clean merge.
 
-## Confirmation gates
+## One-way doors
 
-Ask the user before these three. Everything else — creating the CR, writing pages,
-submitting, approving — is reversible via `withdraw_change_request` / `archive_change_request`,
-so just do it.
+Three actions have no undo. Ask the user first; everything else — creating the branch, writing
+pages, submitting, approving — reverses via `withdraw_change_request` /
+`archive_change_request`, so just do it.
 
-1. **Before `merge_change_request`.** This publishes live and there is no undo endpoint. Show
-   the `diff_change_request` summary — page titles and change types — and the URLs that will
-   appear. Then ask.
-2. **Before any `delete_node` or `is_deleted` flip.** Deletion cascades to descendants. Run the
-   op only after naming every page that will disappear; `deleted_doc_keys` in the response is
-   the authoritative cascade list.
-3. **Before `resolve_merge_conflict`.** See the warning below. Ask per conflict, showing both
-   bodies. Never loop over conflicts picking a side.
+1. **`merge_change_request`** publishes live. Show the `diff_change_request` summary — page
+   titles and change types — and the URLs that will appear. Then ask.
+2. **`delete_node` / an `is_deleted` flip** cascades to descendants. Name every page that will
+   disappear before running the op; `deleted_doc_keys` in the response is the authoritative
+   cascade list.
+3. **`resolve_merge_conflict`** discards one whole side. See below.
 
-## Two rules that do not bend
+## Merge conflicts
 
-- **Never send `base_version: null`.** It disables the concurrency check and turns a lost
-  update into a silent one.
-- **Never run two `apply_cr_operations` concurrently on one CR.** No `&`, no parallel tool
-  calls. Writes take a row lock and must be sequential.
-
-## ⚠️ `ours` and `theirs` are inverted
-
-If you ever reach merge-conflict resolution:
+Resolution is whole-item, there is no rebase, and the orientation is **backwards from git**:
 
 > **`ours` = what is already live on main. `theirs` = the change request's work.**
 
-This is backwards from git. `resolve_merge_conflict(name, "ours")` **discards the author's
-edits**. When explaining the choice to a user, say it in plain words — "keep your new text"
-vs "keep what's already published" — never the bare flag names.
+So `resolve_merge_conflict(name, "ours")` **throws away the author's edits.** Hand conflicts
+to the user: ask per conflict, showing both bodies, and phrase the choice in plain words —
+"keep your new text" vs "keep what's already published". Read
+`reference/api.md` § Merge conflicts before calling anything here.
 
 ## Failure modes
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `{"ok": false, "error": "version_conflict"}` **and exit code 0** | stale `base_version` | Re-read `get_cr_tree`, replay. `set -e` will not catch this — check `ok`. |
-| Page saved but never appears anywhere | `parent_key: null` | Always pass `get_cr_tree(...)["root_group"]`; it is mandatory |
+| `{"ok": false, "error": "version_conflict"}` **and exit code 0** | stale `base_version` | Re-read `get_cr_tree`, replay. `set -e` will not catch this — check `ok` |
+| Page saved but never appears anywhere | `parent_key: null` | Pass the tree's `root_group`; it is mandatory |
 | `DoesNotExistError` on a `tmp-*` key | temp key reused across calls | Use the real key from `temp_key_map` |
-| `There are no changes to submit for review.` | nothing actually changed | Create-then-delete, or pure reordering, can net to empty |
+| `There are no changes to submit for review.` | nothing net-changed | Create-then-delete, or pure reordering, can cancel out |
 | `PermissionError` on every write | `git_synced: 1` space | Edit the GitHub repo instead |
 | `You do not have permission to review…` | `can_write: false` | Submit and hand off to someone with Write on the space |
-| `Merge conflicts detected` | main moved since `base_revision` | Surface to the user; read the inversion warning first |
+| `Merge conflicts detected` | main moved since `base_revision` | Hand to the user; read the inversion above first |
 | Page renders as literal markup | HTML sent as `content` | Send markdown |
-| A field won't clear | `null` in `update_node.fields` is dropped | Pass `""` |
-
-See `reference/api.md` for full signatures, every operation's fields, the status machine, and
-the legacy single-shot RPCs.
+| A field won't clear | `null` in `fields` is dropped | Pass `""` |
