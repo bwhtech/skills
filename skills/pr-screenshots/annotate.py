@@ -1,13 +1,3 @@
-"""Crop a screenshot to its region of interest and mark the change with red boxes and arrows.
-
-Usage:
-	python3 annotate.py <source.png> <target.png> --crop L,T,R,B [--box L,T,R,B ...] [--arrow X1,Y1,X2,Y2 ...]
-
-All coordinates are in the SOURCE screenshot's pixels (what you measured in the browser at that viewport),
-so the same --crop box can be reused for the before and after pair. Output is scaled 2x so it stays sharp
-at GitHub's rendered width.
-"""
-
 import argparse
 import math
 
