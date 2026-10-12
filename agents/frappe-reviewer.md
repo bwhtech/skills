@@ -104,7 +104,7 @@ clever. Do NOT block on borderline size — REQUEST CHANGES only when a function
 - **W4. N+1 in get_context.** It runs per public request — flag `get_doc`/`get_cached_value`/`get_cached_doc`
   in a loop (incl. recursive tree builds); require batched `get_all` + lookup maps.
 - **W5. CSRF / state-changing GET.** Mutations must be POST. Flag any state change on a GET.
-- Template / CSS / Alpine / theme-component concerns (XSS `| safe`, Tailwind, ecomus CSS, screenshots,
+- Template / CSS / Alpine / theme-component concerns (XSS `| safe`, Tailwind, CSS, screenshots,
   convention drift) are NOT your job — leave them to a frontend review.
 
 ## Output format

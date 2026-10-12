@@ -99,7 +99,7 @@ frontend work. Rules:
   `get_doc`/`get_cached_value`/`get_cached_doc` in a loop (incl. recursive tree builds).
 - **Guest endpoints:** `@frappe.whitelist(allow_guest=True)` must validate input AND carry `@rate_limit(...)`;
   justify any `ignore_permissions=True`. All state-changing methods are POST.
-- For any template, Tailwind/ecomus CSS, Alpine, or theme-component work, hand off to frontend work.
+- For any template, Tailwind/CSS, Alpine, or theme-component work, hand off to frontend work.
 
 ## Self-review before you hand off
 Run the reviewer checklist against your own diff (the same one `frappe-reviewer` uses):
